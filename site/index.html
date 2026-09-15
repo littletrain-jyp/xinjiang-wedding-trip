@@ -19,7 +19,7 @@ async function unlock(password,now=Date.now()) {
 <script>
 const form=document.getElementById('form'),input=document.getElementById('password'),button=document.getElementById('submit'),status=document.getElementById('status'),gate=document.getElementById('gate');
 let frame;
-function updateWindow(){try{checkWindow();if(!crypto.subtle){status.textContent='请使用支持加密功能的浏览器，通过 HTTPS 链接打开。';button.disabled=true;return false;}button.disabled=false;return true;}catch(e){if(frame){frame.remove();frame=null;gate.hidden=false;}status.textContent=e.message;button.disabled=true;input.disabled=true;return false;}}
+function updateWindow(){try{checkWindow();if(!crypto.subtle){status.textContent='请使用支持加密功能的浏览器，通过 HTTPS 链接打开。';button.disabled=true;return false;}button.disabled=false;input.disabled=false;if(status.textContent.includes('尚未开放'))status.textContent='';return true;}catch(e){if(frame){frame.remove();frame=null;gate.hidden=false;}status.textContent=e.message;button.disabled=true;input.disabled=true;return false;}}
 form.addEventListener('submit',async e=>{e.preventDefault();if(!updateWindow())return;button.disabled=true;status.textContent='正在解锁…';try{const html=await unlock(input.value);if(!updateWindow())return;input.value='';frame=document.createElement('iframe');frame.title='新疆婚礼旅行手册';frame.setAttribute('sandbox','allow-scripts');frame.srcdoc=html;document.body.append(frame);gate.hidden=true;status.textContent='';}catch(e){status.textContent=e.name==='OperationError'?'密码不正确，请重新输入。':e.message;input.value='';input.focus();}finally{updateWindow();}});
 updateWindow();setInterval(updateWindow,10000);document.addEventListener('visibilitychange',updateWindow);
 </script></body></html>
