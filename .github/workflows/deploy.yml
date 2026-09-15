@@ -1,0 +1,77 @@
+name: Publish travel guide and expire it
+on:
+  push:
+    branches: [main]
+    paths: ['site/**', '.github/workflows/deploy.yml']
+  workflow_dispatch:
+  schedule:
+    - cron: '7 16 * * *'
+permissions:
+  contents: read
+concurrency:
+  group: travel-pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+      actions: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check expiration and prepare only the webpage
+        id: lifecycle
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from datetime import datetime, timezone
+          from pathlib import Path
+          import os
+          expired = datetime.now(timezone.utc) >= datetime(2026, 11, 30, 16, 0, tzinfo=timezone.utc)
+          publish = expired or os.environ['GITHUB_EVENT_NAME'] != 'schedule'
+          if expired:
+              Path('site/index.html').write_text('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>手册已到期</title><body style="font-family:system-ui;text-align:center;padding:15vh 24px;background:#f7f5f0;color:#17384f"><h1>这段旅程，已收藏进回忆</h1><p>旅行手册的有效期已于 2026 年 11 月 30 日结束。</p></body></html>', encoding='utf-8')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'publish={str(publish).lower()}\nexpired={str(expired).lower()}\n')
+          PY
+      - name: Keep expiration schedule active until the end date
+        if: github.event_name == 'schedule' && steps.lifecycle.outputs.expired == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, subprocess
+          from datetime import datetime, timezone
+          now = datetime.now(timezone.utc)
+          if now.weekday() != 6:
+              raise SystemExit(0)
+          endpoint = 'repos/' + os.environ['GITHUB_REPOSITORY'] + '/contents/.github/schedule-activity'
+          old = subprocess.run(['gh', 'api', endpoint], capture_output=True, text=True)
+          body = {'message': 'Keep scheduled expiration active', 'content': base64.b64encode((now.isoformat()+'\n').encode()).decode()}
+          if old.returncode == 0:
+              body['sha'] = json.loads(old.stdout)['sha']
+          elif '404' not in old.stderr:
+              raise RuntimeError('Cannot inspect scheduled activity marker')
+          subprocess.run(['gh','api','--method','PUT',endpoint,'--input','-','--silent'], input=json.dumps(body), text=True, check=True)
+          PY
+      - uses: actions/configure-pages@v5
+        if: steps.lifecycle.outputs.publish == 'true'
+      - uses: actions/upload-pages-artifact@v4
+        if: steps.lifecycle.outputs.publish == 'true'
+        with:
+          path: site
+          retention-days: 1
+      - uses: actions/deploy-pages@v4
+        if: steps.lifecycle.outputs.publish == 'true'
+        id: deployment
+      - name: Stop schedule after publishing the expired page
+        if: steps.lifecycle.outputs.expired == 'true' && steps.deployment.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method PUT "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yml/disable"
